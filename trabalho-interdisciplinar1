@@ -1,0 +1,107 @@
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
+Adafruit_AHTX0 aht;
+
+// ---------- Pinos ----------
+const byte PIN_MQ = A0;
+const byte PIN_POT = A1;
+const byte PIN_BTN = 3;
+const byte PIN_BUZZER = 7;
+const byte LED_R = 9;
+const byte LED_B = 11;
+const byte LED_G = 10;
+
+// ---------- Média móvel ----------
+const byte N = 10;
+int mqBuf[N]; int mqPos=0; long mqSum=0;
+float tBuf[N], hBuf[N]; int thPos=0; float tSum=0,hSum=0;
+int score=0;
+
+void atualizarMediaMQ(int v){ mqSum-=mqBuf[mqPos]; mqBuf[mqPos]=v; mqSum+=v; }
+float mediaMQ(){ return (float)mqSum/N; }
+
+void atualizarMediaTH(float t,float h){
+ tSum-=tBuf[thPos]; hSum-=hBuf[thPos];
+ tBuf[thPos]=t; hBuf[thPos]=h;
+ tSum+=t; hSum+=h;
+ thPos=(thPos+1)%N;
+}
+float mediaTemp(){ return tSum/N; }
+float mediaHum(){ return hSum/N; }
+
+void mostrar(float t,float h,int mq,int sens,int risco,const char* st){
+ Serial.println("----------------------------");
+ Serial.print("Temperatura: ");Serial.print(t,1);Serial.println(" C");
+ Serial.print("Umidade: ");Serial.print(h,1);Serial.println(" %");
+ Serial.print("Risco: ");Serial.println(risco);
+ Serial.print("Status: ");Serial.println(st);
+ Serial.print("Pontuacao: ");Serial.println(score);
+}
+
+void setup(){
+ Serial.begin(9600);
+ Wire.begin();
+ aht.begin();
+ pinMode(PIN_BTN,INPUT_PULLUP);
+ pinMode(PIN_BUZZER,OUTPUT);
+ pinMode(LED_R,OUTPUT);
+ pinMode(LED_B,OUTPUT);
+ pinMode(LED_G,OUTPUT);
+
+ sensors_event_t hum,temp;
+ for(int i=0;i<N;i++){
+ mqBuf[i]=analogRead(PIN_MQ); mqSum+=mqBuf[i];
+ aht.getEvent(&hum,&temp);
+ tBuf[i]=temp.temperature;
+ hBuf[i]=hum.relative_humidity;
+ tSum+=tBuf[i];
+ hSum+=hBuf[i];
+ }
+}
+
+void loop(){
+ atualizarMediaMQ(analogRead(PIN_MQ));
+ mqPos=(mqPos+1)%N;
+
+ sensors_event_t hum,temp;
+ aht.getEvent(&hum,&temp);
+ atualizarMediaTH(temp.temperature,hum.relative_humidity);
+
+ int mq=mediaMQ();
+ float t=mediaTemp();
+ float h=mediaHum();
+ int sens=map(analogRead(PIN_POT),0,1023,120,400);
+
+ int risco=0;
+ if(t>=30.0) risco=100;
+ else if(t>=28.0) risco=50;
+ else{
+   if(h<=27) risco+=10;
+   if(h<=29) risco+=20;
+   if(mq>=sens) risco+=40;
+ }
+
+ const char* status="SEGURO";
+ if(risco<27){
+   digitalWrite(LED_G,HIGH); digitalWrite(LED_B,LOW); digitalWrite(LED_R,LOW); noTone(PIN_BUZZER);
+ }else if(risco<60){
+   status="ALERTA";
+   digitalWrite(LED_G,LOW); digitalWrite(LED_B,HIGH); digitalWrite(LED_R,LOW);
+   tone(PIN_BUZZER,700,150);
+ }else{
+   status="URGENCIA";
+   digitalWrite(LED_G,LOW); digitalWrite(LED_B,LOW); digitalWrite(LED_R,HIGH);
+   tone(PIN_BUZZER,1000);
+ }
+
+ if(digitalRead(PIN_BTN)==LOW){
+   delay(30);
+   if(digitalRead(PIN_BTN)==LOW && risco<27){
+     score++;
+     while(digitalRead(PIN_BTN)==LOW){}
+   }
+ }
+
+ mostrar(t,h,mq,sens,risco,status);
+ delay(500);
+}
